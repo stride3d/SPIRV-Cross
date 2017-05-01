@@ -20,6 +20,9 @@
 #include "spirv.hpp"
 #include "spirv_common.hpp"
 
+#include <string>
+#include <vector>
+
 namespace spirv_cross
 {
 
@@ -27,6 +30,12 @@ class SPIRV_CROSS
 {
 public:
     static int executeCmd(int argc, char *argv[]);
+
+    static int convertSpvBytecodeToGlsl(const std::vector<uint32_t>& bytecode, std::string& glsl);
+    static int convertSpvBytecodeToHlsl(const std::vector<uint32_t>& bytecode, int shaderModel, std::string& hlsl);
+
+private:
+    static int convertSpvBytecodeToShader(const std::vector<uint32_t>& bytecode, std::string& shaderString, int argc, char *argv[]);
 };
 
 class CFG;
