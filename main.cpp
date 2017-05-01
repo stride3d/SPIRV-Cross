@@ -537,7 +537,8 @@ static PlsFormat pls_format(const char *str)
 		return PlsNone;
 }
 
-int main(int argc, char *argv[])
+//int main(int argc, char *argv[])
+int main_original(int argc, char *argv[])
 {
 	CLIArguments args;
 	CLICallbacks cbs;
@@ -762,4 +763,11 @@ int main(int argc, char *argv[])
 		write_string_to_file(args.output, glsl.c_str());
 	else
 		printf("%s", glsl.c_str());
+
+    return EXIT_SUCCESS;
+}
+
+int SPIRV_CROSS::executeCmd(int argc, char *argv[])
+{
+    return main_original(argc, argv);
 }

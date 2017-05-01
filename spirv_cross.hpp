@@ -22,6 +22,13 @@
 
 namespace spirv_cross
 {
+
+class SPIRV_CROSS
+{
+public:
+    static int executeCmd(int argc, char *argv[]);
+};
+
 class CFG;
 struct Resource
 {
