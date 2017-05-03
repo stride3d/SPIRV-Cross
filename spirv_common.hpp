@@ -929,6 +929,7 @@ struct Meta
 	struct Decoration
 	{
 		std::string alias;
+        std::string userSemanticName;  //XKSL extensions
 		std::string qualified_alias;
 		uint64_t decoration_flags = 0;
 		spv::BuiltIn builtin_type;

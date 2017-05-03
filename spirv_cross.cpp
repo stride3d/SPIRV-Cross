@@ -810,6 +810,17 @@ void Compiler::update_name_cache(unordered_set<string> &cache, string &name)
 	cache.insert(name);
 }
 
+void Compiler::set_VariableUserSemanticName(uint32_t id, const std::string &userSemanticName)
+{
+    auto &semantic = meta.at(id).decoration.userSemanticName;
+    semantic.clear();
+
+    if (userSemanticName.empty())
+        return;
+
+    semantic = userSemanticName;
+}
+
 void Compiler::set_name(uint32_t id, const std::string &name)
 {
 	auto &str = meta.at(id).decoration.alias;
@@ -1038,6 +1049,11 @@ const std::string &Compiler::get_name(uint32_t id) const
 	return meta.at(id).decoration.alias;
 }
 
+const std::string &Compiler::get_VaviableUserSemanticName(uint32_t id) const
+{
+    return meta.at(id).decoration.userSemanticName;
+}
+
 uint64_t Compiler::get_decoration_mask(uint32_t id) const
 {
 	auto &dec = meta.at(id).decoration;
@@ -1264,6 +1280,13 @@ void Compiler::parse(const Instruction &instruction)
 		set_member_name(id, member, extract_string(spirv, instruction.offset + 2));
 		break;
 	}
+
+    case OpSemanticName:
+    {
+        uint32_t id = ops[0];
+        set_VariableUserSemanticName(id, extract_string(spirv, instruction.offset + 1));
+        break;
+    }
 
 	case OpDecorate:
 	{

@@ -142,6 +142,10 @@ public:
 	// are reserved by the implementation.
 	void set_name(uint32_t id, const std::string &name);
 
+    //XKSL Extensions
+    void set_VariableUserSemanticName(uint32_t id, const std::string &userSemanticName);
+    const std::string &get_VaviableUserSemanticName(uint32_t id) const;
+
 	// Gets a bitmask for the decorations which are applied to ID.
 	// I.e. (1ull << spv::DecorationFoo) | (1ull << spv::DecorationBar)
 	uint64_t get_decoration_mask(uint32_t id) const;

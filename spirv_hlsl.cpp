@@ -412,6 +412,14 @@ void CompilerHLSL::emit_interface_block_in_struct(const SPIRVariable &var, unord
 	auto &execution = get_entry_point();
 	auto &type = get<SPIRType>(var.basetype);
 
+    //XKSLANG extensions: the bytecode already specified the member semantic name through an OpSemanticName instruction
+    auto userSemanticName = get_VaviableUserSemanticName(var.self);
+    if (userSemanticName.length() > 0)
+    {
+        statement(variable_decl(type, to_name(var.self)), " : ", userSemanticName, ";");
+        return;
+    }
+
 	string binding;
 	bool use_binding_number = true;
 	bool legacy = options.shader_model <= 30;

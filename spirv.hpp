@@ -862,6 +862,11 @@ enum Op {
     OpAtomicFlagTestAndSet = 318,
     OpAtomicFlagClear = 319,
     OpImageSparseRead = 320,
+
+    //================================================================================================
+    //XKSL extensions
+    OpSemanticName = 4608,                   //Record the semantic name of a type, as declared by the user
+    //================================================================================================
 };
 
 // Overload operator| for mask bit combining
