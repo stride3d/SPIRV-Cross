@@ -865,7 +865,7 @@ enum Op {
 
     //================================================================================================
     //XKSL extensions
-    OpSemanticName = 4608,                   //Record the semantic name of a type, as declared by the user
+    OpSemanticName = 4609,                   //Record the semantic name of a type, as declared by the user
     //================================================================================================
 };
 
