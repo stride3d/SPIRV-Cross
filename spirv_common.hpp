@@ -298,6 +298,7 @@ struct SPIRType : IVariant
 		bool ms;
 		uint32_t sampled;
 		spv::ImageFormat format;
+		spv::AccessQualifier access;
 	} image;
 
 	// Structs can be declared multiple times if they are used as part of interface blocks.
