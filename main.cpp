@@ -820,7 +820,6 @@ bool parseArgs(int argc, char *argv[], CLIArguments& args)
     cbs.add("--cpp-interface-name", [&args](CLIParser &parser) { args.cpp_interface_name = parser.next_string(); });
     cbs.add("--metal", [&args](CLIParser &) { args.msl = true; }); // Legacy compatibility
     cbs.add("--msl", [&args](CLIParser &) { args.msl = true; });
-    cbs.add("--msl-no-pack-ubos", [&args](CLIParser &) { args.msl_pack_ubos = false; });
     cbs.add("--hlsl", [&args](CLIParser &) { args.hlsl = true; });
     cbs.add("--vulkan-semantics", [&args](CLIParser &) { args.vulkan_semantics = true; });
     cbs.add("--extension", [&args](CLIParser &parser) { args.extensions.push_back(parser.next_string()); });
@@ -923,7 +922,6 @@ int SPIRV_CROSS::convertSpvBytecodeToShader(const vector<uint32_t>& bytecode, st
 
         auto *msl_comp = static_cast<CompilerMSL *>(compiler.get());
         auto msl_opts = msl_comp->get_options();
-        msl_opts.pad_and_pack_uniform_structs = args.msl_pack_ubos;
         msl_comp->set_options(msl_opts);
     }
     else if (args.hlsl)
