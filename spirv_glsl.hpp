@@ -23,6 +23,8 @@
 #include <unordered_set>
 #include <utility>
 
+#include "../xkslang/source/Common/define.h"
+
 namespace spirv_cross
 {
 enum PlsFormat

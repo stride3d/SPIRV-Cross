@@ -875,30 +875,56 @@ string CompilerHLSL::layout_for_member(const SPIRType &, uint32_t)
 
 void CompilerHLSL::emit_buffer_block(const SPIRVariable &var)
 {
-	auto &type = get<SPIRType>(var.basetype);
+#ifdef SPIRV_CROSS_INSERT_CBUFFER_MEMBERS_DIRECTLY_WITHIN_CBUFFER_DECLARATION
+    //==============
+    //XKSL extensions
+    // We directly add the cbuffer members within the cbuffer declaration, instead of using an intermediate structure
+    auto &type = get<SPIRType>(var.basetype);
 
-	add_resource_name(type.self);
+    add_resource_name(type.self);
 
-	statement("struct _", to_name(type.self));
-	begin_scope();
+    statement("cbuffer ", to_name(type.self), to_resource_binding(var));
+    begin_scope();
 
-	type.member_name_cache.clear();
+    {
+        type.member_name_cache.clear();
+        uint32_t i = 0;
+        for (auto &member : type.member_types)
+        {
+            add_member_name(type, i);
+            emit_struct_member(type, member, i);
+            i++;
+        }
+    }
 
-	uint32_t i = 0;
-	for (auto &member : type.member_types)
-	{
-		add_member_name(type, i);
-		emit_struct_member(type, member, i);
-		i++;
-	}
-	end_scope_decl();
-	statement("");
+    end_scope_decl();
+    //==============
+#else
+    auto &type = get<SPIRType>(var.basetype);
 
-	// TODO: UAV?
-	statement("cbuffer ", to_name(type.self), to_resource_binding(var));
-	begin_scope();
-	statement("_", to_name(type.self), " ", to_name(var.self), ";");
-	end_scope_decl();
+    add_resource_name(type.self);
+
+    statement("struct _", to_name(type.self));
+    begin_scope();
+
+    type.member_name_cache.clear();
+
+    uint32_t i = 0;
+    for (auto &member : type.member_types)
+    {
+        add_member_name(type, i);
+        emit_struct_member(type, member, i);
+        i++;
+    }
+    end_scope_decl();
+    statement("");
+
+    // TODO: UAV?
+    statement("cbuffer ", to_name(type.self), to_resource_binding(var));
+    begin_scope();
+    statement("_", to_name(type.self), " ", to_name(var.self), ";");
+    end_scope_decl();
+#endif
 }
 
 void CompilerHLSL::emit_push_constant_block(const SPIRVariable &var)
