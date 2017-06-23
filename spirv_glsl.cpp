@@ -4428,18 +4428,22 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		auto &expr = set<SPIRExpression>(ops[1], move(e), ops[0], should_forward(ops[2]));
 
 #ifdef SPIRV_CROSS_INSERT_CBUFFER_MEMBERS_DIRECTLY_WITHIN_CBUFFER_DECLARATION
+
         //XKSL extensions
         // We want to take the cbuffer members out of the struct that SPIRV-Cross create by default to store them
         // When we have an access to a struct member (through OpAccessChain), if var is a cbuffer (uniform variable to a struct type), we replace the expression "var.member..." by "member..."
-        if (var->storage == spv::StorageClass::StorageClassUniform)
+        if (this->options.vulkan_semantics == true)
         {
-            auto *baseType = maybe_get<SPIRType>(var->basetype);
-            if (baseType)
+            if (var->storage == spv::StorageClass::StorageClassUniform)
             {
-                if (baseType->basetype == SPIRType::Struct)
+                auto *baseType = maybe_get<SPIRType>(var->basetype);
+                if (baseType)
                 {
-                    int indexDot = expr.expression.find_first_of('.');
-                    if (indexDot > 0 && indexDot < expr.expression.length() - 1) expr.expression = expr.expression.substr(indexDot + 1);
+                    if (baseType->basetype == SPIRType::Struct)
+                    {
+                        int indexDot = expr.expression.find_first_of('.');
+                        if (indexDot > 0 && indexDot < expr.expression.length() - 1) expr.expression = expr.expression.substr(indexDot + 1);
+                    }
                 }
             }
         }
