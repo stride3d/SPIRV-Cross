@@ -23,7 +23,7 @@
 #include <unordered_set>
 #include <utility>
 
-#include "../xkslang/source/Common/define.h"
+#include "../xkslang/source/Common/xkslangDefine.h"
 
 namespace spirv_cross
 {
