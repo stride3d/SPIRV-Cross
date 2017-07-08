@@ -1338,12 +1338,20 @@ void Compiler::parse(const Instruction &instruction)
 		break;
 	}
 
+    //==============================================================
+    // XKSL extensions
     case OpSemanticName:
     {
         uint32_t id = ops[0];
         set_VariableUserSemanticName(id, extract_string(spirv, instruction.offset + 1));
         break;
     }
+
+    case OpLinkName:
+    {
+        break;
+    }
+    //==============================================================
 
 	case OpDecorate:
 	{
