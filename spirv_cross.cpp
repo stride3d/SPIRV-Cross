@@ -1347,6 +1347,7 @@ void Compiler::parse(const Instruction &instruction)
         break;
     }
 
+    case OpResourceGroupName:
     case OpLinkName:
     {
         break;
