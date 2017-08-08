@@ -943,7 +943,8 @@ enum Op {
     //XKSL extensions (IDs here MUST be identical from IDs defined in glslang)
     OpMemberLinkName = 4601,                 //Used when user specified a linkName (KeyName) attribute for a cbuffer/rgroup member
     OpLinkName = 4602,                       //Used when user specified a linkName (KeyName) attribute for a variable
-    OpSemanticName = 4612,                   //Record the semantic name of a type, as declared by the user
+    OpMemberLogicalGroup = 4603,             //Used when we have a member with a logical group
+    OpSemanticName = 4613,                   //Record the semantic name of a type, as declared by the user
     //================================================================================================
     
     OpMax = 0x7fffffff,
