@@ -4441,7 +4441,7 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
                 {
                     if (baseType->basetype == SPIRType::Struct)
                     {
-                        unsigned int indexDot = expr.expression.find_first_of('.');
+                        unsigned int indexDot = (unsigned int)(expr.expression.find_first_of('.'));
                         if (indexDot > 0 && indexDot < expr.expression.length() - 1) expr.expression = expr.expression.substr(indexDot + 1);
                     }
                 }
