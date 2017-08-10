@@ -1002,7 +1002,7 @@ uint64_t Compiler::get_member_decoration_mask(uint32_t id, uint32_t index) const
 
 bool Compiler::has_member_decoration(uint32_t id, uint32_t index, Decoration decoration) const
 {
-	return get_member_decoration_mask(id, index) & (1ull << decoration);
+	return (get_member_decoration_mask(id, index) & (1ull << decoration))? true: false;
 }
 
 void Compiler::unset_member_decoration(uint32_t id, uint32_t index, Decoration decoration)
@@ -1109,7 +1109,7 @@ uint64_t Compiler::get_decoration_mask(uint32_t id) const
 
 bool Compiler::has_decoration(uint32_t id, Decoration decoration) const
 {
-	return get_decoration_mask(id) & (1ull << decoration);
+	return (get_decoration_mask(id) & (1ull << decoration))? true: false;
 }
 
 uint32_t Compiler::get_decoration(uint32_t id, Decoration decoration) const
@@ -3462,7 +3462,7 @@ bool Compiler::has_active_builtin(BuiltIn builtin, StorageClass storage)
 	default:
 		return false;
 	}
-	return flags & (1ull << builtin);
+	return (flags & (1ull << builtin))? true: false;
 }
 
 void Compiler::analyze_sampler_comparison_states()
