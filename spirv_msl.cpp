@@ -414,8 +414,9 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage)
 
 				auto &mbr_type = get<SPIRType>(mbr_type_id);
 				if (is_matrix(mbr_type))
+				{
 					exclude_member_from_stage_in(type, mbr_idx);
-
+				}
 				else if (!is_builtin || has_active_builtin(builtin, storage))
 				{
 					// Add a reference to the member to the interface struct.
@@ -434,6 +435,14 @@ uint32_t CompilerMSL::add_interface_block(StorageClass storage)
 					if (has_member_decoration(type_id, mbr_idx, DecorationLocation))
 					{
 						uint32_t locn = get_member_decoration(type_id, mbr_idx, DecorationLocation);
+						set_member_decoration(ib_type_id, ib_mbr_idx, DecorationLocation, locn);
+						mark_location_as_used_by_shader(locn, storage);
+					}
+					else if (has_decoration(p_var->self, DecorationLocation))
+					{
+						// The block itself might have a location and in this case, all members of the block
+						// receive incrementing locations.
+						uint32_t locn = get_decoration(p_var->self, DecorationLocation) + mbr_idx;
 						set_member_decoration(ib_type_id, ib_mbr_idx, DecorationLocation, locn);
 						mark_location_as_used_by_shader(locn, storage);
 					}
@@ -582,7 +591,8 @@ string CompilerMSL::add_input_buffer_block_member(uint32_t mbr_type_id, string m
 	set_member_decoration(ib_type_id, ib_mbr_idx, DecorationLocation, k_unknown_location);
 
 	// Update the original variable reference to include the structure and index reference
-	string idx_var_name = builtin_to_glsl(p_va->per_instance ? BuiltInInstanceIndex : BuiltInVertexIndex);
+	string idx_var_name =
+	    builtin_to_glsl(p_va->per_instance ? BuiltInInstanceIndex : BuiltInVertexIndex, StorageClassInput);
 	return get_name(ib_var_id) + "[" + idx_var_name + "]." + mbr_name;
 }
 
@@ -979,6 +989,8 @@ void CompilerMSL::emit_resources()
 			}
 		}
 	}
+
+	declare_undefined_values();
 
 	// Output interface blocks.
 	emit_interface_block(stage_in_var_id);
@@ -2376,7 +2388,7 @@ string CompilerMSL::to_qualified_member_name(const SPIRType &type, uint32_t inde
 	// Don't qualify Builtin names because they are unique and are treated as such when building expressions
 	BuiltIn builtin;
 	if (is_member_builtin(type, index, &builtin))
-		return builtin_to_glsl(builtin);
+		return builtin_to_glsl(builtin, type.storage);
 
 	// Strip any underscore prefix from member name
 	string mbr_name = to_member_name(type, index);
@@ -2583,7 +2595,7 @@ string CompilerMSL::bitcast_glsl_op(const SPIRType &out_type, const SPIRType &in
 
 // Returns an MSL string identifying the name of a SPIR-V builtin.
 // Output builtins are qualified with the name of the stage out structure.
-string CompilerMSL::builtin_to_glsl(BuiltIn builtin)
+string CompilerMSL::builtin_to_glsl(BuiltIn builtin, StorageClass storage)
 {
 	switch (builtin)
 	{
@@ -2604,12 +2616,12 @@ string CompilerMSL::builtin_to_glsl(BuiltIn builtin)
 	case BuiltInClipDistance:
 	case BuiltInLayer:
 		if (current_function && (current_function->self == entry_point))
-			return stage_out_var_name + "." + CompilerGLSL::builtin_to_glsl(builtin);
+			return stage_out_var_name + "." + CompilerGLSL::builtin_to_glsl(builtin, storage);
 		else
-			return CompilerGLSL::builtin_to_glsl(builtin);
+			return CompilerGLSL::builtin_to_glsl(builtin, storage);
 
 	default:
-		return CompilerGLSL::builtin_to_glsl(builtin);
+		return CompilerGLSL::builtin_to_glsl(builtin, storage);
 	}
 }
 
@@ -2735,7 +2747,10 @@ string CompilerMSL::built_in_func_arg(BuiltIn builtin, bool prefix_comma)
 	if (prefix_comma)
 		bi_arg += ", ";
 	bi_arg += builtin_type_decl(builtin);
-	bi_arg += " " + builtin_to_glsl(builtin);
+
+	assert(builtin == BuiltInVertexIndex || builtin == BuiltInInstanceIndex);
+	bi_arg += " " + builtin_to_glsl(builtin, StorageClassInput);
+
 	bi_arg += " [[" + builtin_qualifier(builtin) + "]]";
 	return bi_arg;
 }

@@ -173,6 +173,12 @@ You can make use of the reflection interface to force the name of the struct typ
 compiler.set_name(varying_resource.base_type_id, "VertexFragmentLinkage");
 ```
 
+Some platform may require identical variable name for both vertex outputs and fragment inputs. (for example MacOSX)
+to rename varaible base on location, please add
+```
+--rename-interface-variable <in|out> <location> <new_variable_name>
+```
+
 #### HLSL source to legacy GLSL/ESSL
 
 HLSL tends to emit varying struct types to pass data between vertex and fragment.
@@ -230,9 +236,9 @@ This can be done with `Compiler::set_decoration(id, spv::DecorationDescriptorSet
 
 #### Linking by name for targets which do not support explicit locations (legacy GLSL/ESSL)
 
-Modern GLSL and HLSL sources will rely on explicit layout(location) qualifiers to guide the linking process,
-but legacy GLSL relies on symbol names to perform the linking. When emitting legacy shaders, these layout statements will be dropped,
-so it is important that the API user ensures that the names of I/O variables are sanitized to ensure that linking will work properly.
+Modern GLSL and HLSL sources (and SPIR-V) relies on explicit layout(location) qualifiers to guide the linking process between shader stages,
+but older GLSL relies on symbol names to perform the linking. When emitting shaders with older versions, these layout statements will be removed,
+so it is important that the API user ensures that the names of I/O variables are sanitized so that linking will work properly.
 The reflection API can rename variables, struct types and struct members to deal with these scenarios using `Compiler::set_name` and friends.
 
 ## Contributing

@@ -965,14 +965,30 @@ string CompilerGLSL::layout_for_variable(const SPIRVariable &var)
 
 	if (flags & (1ull << DecorationLocation))
 	{
-		uint64_t combined_decoration = 0;
-		for (uint32_t i = 0; i < meta[type.self].members.size(); i++)
-			combined_decoration |= combined_decoration_for_member(type, i);
+		bool can_use_varying_location = true;
 
-		// If our members have location decorations, we don't need to
-		// emit location decorations at the top as well (looks weird).
-		if ((combined_decoration & (1ull << DecorationLocation)) == 0)
-			attr.push_back(join("location = ", dec.location));
+		// Location specifiers are must have in SPIR-V, but they aren't really supported in earlier versions of GLSL.
+		// Be very explicit here about how to solve the issue.
+		if ((get_execution_model() != ExecutionModelVertex && var.storage == StorageClassInput) ||
+		    (get_execution_model() != ExecutionModelFragment && var.storage == StorageClassOutput))
+		{
+			if (!options.es && options.version < 410 && !options.separate_shader_objects)
+				can_use_varying_location = false;
+			else if (options.es && options.version < 310)
+				can_use_varying_location = false;
+		}
+
+		if (can_use_varying_location)
+		{
+			uint64_t combined_decoration = 0;
+			for (uint32_t i = 0; i < meta[type.self].members.size(); i++)
+				combined_decoration |= combined_decoration_for_member(type, i);
+
+			// If our members have location decorations, we don't need to
+			// emit location decorations at the top as well (looks weird).
+			if ((combined_decoration & (1ull << DecorationLocation)) == 0)
+				attr.push_back(join("location = ", dec.location));
+		}
 	}
 
 	// set = 0 is the default. Do not emit set = decoration in regular GLSL output, but
@@ -1327,28 +1343,28 @@ void CompilerGLSL::replace_illegal_names()
 {
 	// clang-format off
 	static const unordered_set<string> keywords = {
-		"active", "asm", "atomic_uint", "attribute", "bool", "break", 
-		"bvec2", "bvec3", "bvec4", "case", "cast", "centroid", "class", "coherent", "common", "const", "continue", "default", "discard", 
-		"dmat2", "dmat2x2", "dmat2x3", "dmat2x4", "dmat3", "dmat3x2", "dmat3x3", "dmat3x4", "dmat4", "dmat4x2", "dmat4x3", "dmat4x4", 
-		"do", "double", "dvec2", "dvec3", "dvec4", "else", "enum", "extern", "external", "false", "filter", "fixed", "flat", "float", 
-		"for", "fvec2", "fvec3", "fvec4", "goto", "half", "highp", "hvec2", "hvec3", "hvec4", "if", "iimage1D", "iimage1DArray", 
-		"iimage2D", "iimage2DArray", "iimage2DMS", "iimage2DMSArray", "iimage2DRect", "iimage3D", "iimageBuffer", "iimageCube", 
-		"iimageCubeArray", "image1D", "image1DArray", "image2D", "image2DArray", "image2DMS", "image2DMSArray", "image2DRect", 
-		"image3D", "imageBuffer", "imageCube", "imageCubeArray", "in", "inline", "inout", "input", "int", "interface", "invariant", 
-		"isampler1D", "isampler1DArray", "isampler2D", "isampler2DArray", "isampler2DMS", "isampler2DMSArray", "isampler2DRect", 
-		"isampler3D", "isamplerBuffer", "isamplerCube", "isamplerCubeArray", "ivec2", "ivec3", "ivec4", "layout", "long", "lowp", 
-		"mat2", "mat2x2", "mat2x3", "mat2x4", "mat3", "mat3x2", "mat3x3", "mat3x4", "mat4", "mat4x2", "mat4x3", "mat4x4", "mediump", 
-		"namespace", "noinline", "noperspective", "out", "output", "packed", "partition", "patch", "precision", "public", "readonly", 
-		"resource", "restrict", "return", "row_major", "sample", "sampler1D", "sampler1DArray", "sampler1DArrayShadow", 
-		"sampler1DShadow", "sampler2D", "sampler2DArray", "sampler2DArrayShadow", "sampler2DMS", "sampler2DMSArray", 
-		"sampler2DRect", "sampler2DRectShadow", "sampler2DShadow", "sampler3D", "sampler3DRect", "samplerBuffer", 
-		"samplerCube", "samplerCubeArray", "samplerCubeArrayShadow", "samplerCubeShadow", "short", "sizeof", "smooth", "static", 
-		"struct", "subroutine", "superp", "switch", "template", "this", "true", "typedef", "uimage1D", "uimage1DArray", "uimage2D", 
-		"uimage2DArray", "uimage2DMS", "uimage2DMSArray", "uimage2DRect", "uimage3D", "uimageBuffer", "uimageCube", 
-		"uimageCubeArray", "uint", "uniform", "union", "unsigned", "usampler1D", "usampler1DArray", "usampler2D", "usampler2DArray", 
-		"usampler2DMS", "usampler2DMSArray", "usampler2DRect", "usampler3D", "usamplerBuffer", "usamplerCube", 
-		"usamplerCubeArray", "using", "uvec2", "uvec3", "uvec4", "varying", "vec2", "vec3", "vec4", "void", "volatile", "volatile", 
-		"while", "writeonly"
+		"active", "asm", "atomic_uint", "attribute", "bool", "break",
+		"bvec2", "bvec3", "bvec4", "case", "cast", "centroid", "class", "coherent", "common", "const", "continue", "default", "discard",
+		"dmat2", "dmat2x2", "dmat2x3", "dmat2x4", "dmat3", "dmat3x2", "dmat3x3", "dmat3x4", "dmat4", "dmat4x2", "dmat4x3", "dmat4x4",
+		"do", "double", "dvec2", "dvec3", "dvec4", "else", "enum", "extern", "external", "false", "filter", "fixed", "flat", "float",
+		"for", "fvec2", "fvec3", "fvec4", "goto", "half", "highp", "hvec2", "hvec3", "hvec4", "if", "iimage1D", "iimage1DArray",
+		"iimage2D", "iimage2DArray", "iimage2DMS", "iimage2DMSArray", "iimage2DRect", "iimage3D", "iimageBuffer", "iimageCube",
+		"iimageCubeArray", "image1D", "image1DArray", "image2D", "image2DArray", "image2DMS", "image2DMSArray", "image2DRect",
+		"image3D", "imageBuffer", "imageCube", "imageCubeArray", "in", "inline", "inout", "input", "int", "interface", "invariant",
+		"isampler1D", "isampler1DArray", "isampler2D", "isampler2DArray", "isampler2DMS", "isampler2DMSArray", "isampler2DRect",
+		"isampler3D", "isamplerBuffer", "isamplerCube", "isamplerCubeArray", "ivec2", "ivec3", "ivec4", "layout", "long", "lowp",
+		"mat2", "mat2x2", "mat2x3", "mat2x4", "mat3", "mat3x2", "mat3x3", "mat3x4", "mat4", "mat4x2", "mat4x3", "mat4x4", "mediump",
+		"namespace", "noinline", "noperspective", "out", "output", "packed", "partition", "patch", "precision", "public", "readonly",
+		"resource", "restrict", "return", "row_major", "sample", "sampler1D", "sampler1DArray", "sampler1DArrayShadow",
+		"sampler1DShadow", "sampler2D", "sampler2DArray", "sampler2DArrayShadow", "sampler2DMS", "sampler2DMSArray",
+		"sampler2DRect", "sampler2DRectShadow", "sampler2DShadow", "sampler3D", "sampler3DRect", "samplerBuffer",
+		"samplerCube", "samplerCubeArray", "samplerCubeArrayShadow", "samplerCubeShadow", "short", "sizeof", "smooth", "static",
+		"struct", "subroutine", "superp", "switch", "template", "this", "true", "typedef", "uimage1D", "uimage1DArray", "uimage2D",
+		"uimage2DArray", "uimage2DMS", "uimage2DMSArray", "uimage2DRect", "uimage3D", "uimageBuffer", "uimageCube",
+		"uimageCubeArray", "uint", "uniform", "union", "unsigned", "usampler1D", "usampler1DArray", "usampler2D", "usampler2DArray",
+		"usampler2DMS", "usampler2DMSArray", "usampler2DRect", "usampler3D", "usamplerBuffer", "usamplerCube",
+		"usamplerCubeArray", "using", "uvec2", "uvec3", "uvec4", "varying", "vec2", "vec3", "vec4", "void", "volatile", "volatile",
+		"while", "writeonly", "texture"
 	};
 	// clang-format on
 
@@ -1562,6 +1578,23 @@ void CompilerGLSL::emit_declared_builtin_block(StorageClass storage, ExecutionMo
 	}
 }
 
+void CompilerGLSL::declare_undefined_values()
+{
+	bool emitted = false;
+	for (auto &id : ids)
+	{
+		if (id.get_type() != TypeUndef)
+			continue;
+
+		auto &undef = id.get<SPIRUndef>();
+		statement(variable_decl(get<SPIRType>(undef.basetype), to_name(undef.self), undef.self), ";");
+		emitted = true;
+	}
+
+	if (emitted)
+		statement("");
+}
+
 void CompilerGLSL::emit_resources()
 {
 	auto &execution = get_entry_point();
@@ -1756,6 +1789,8 @@ void CompilerGLSL::emit_resources()
 
 	if (emitted)
 		statement("");
+
+	declare_undefined_values();
 }
 
 // Returns a string representation of the ID, usable as a function arg.
@@ -1768,13 +1803,6 @@ string CompilerGLSL::to_func_call_arg(uint32_t id)
 
 void CompilerGLSL::handle_invalid_expression(uint32_t id)
 {
-	auto &expr = get<SPIRExpression>(id);
-
-	// This expression has been invalidated in the past.
-	// Be careful with this expression next pass ...
-	// Used for OpCompositeInsert forwarding atm.
-	expr.used_while_invalidated = true;
-
 	// We tried to read an invalidated expression.
 	// This means we need another pass at compilation, but next time, force temporary variables so that they cannot be invalidated.
 	forced_temporaries.insert(id);
@@ -1819,23 +1847,36 @@ void CompilerGLSL::strip_enclosed_expression(string &expr)
 string CompilerGLSL::enclose_expression(const string &expr)
 {
 	bool need_parens = false;
-	uint32_t paren_count = 0;
-	for (auto c : expr)
+
+	// If the expression starts with a unary we need to enclose to deal with cases where we have back-to-back
+	// unary expressions.
+	if (!expr.empty())
 	{
-		if (c == '(')
-			paren_count++;
-		else if (c == ')')
-		{
-			assert(paren_count);
-			paren_count--;
-		}
-		else if (c == ' ' && paren_count == 0)
-		{
+		auto c = expr.front();
+		if (c == '-' || c == '+' || c == '!' || c == '~')
 			need_parens = true;
-			break;
-		}
 	}
-	assert(paren_count == 0);
+
+	if (!need_parens)
+	{
+		uint32_t paren_count = 0;
+		for (auto c : expr)
+		{
+			if (c == '(')
+				paren_count++;
+			else if (c == ')')
+			{
+				assert(paren_count);
+				paren_count--;
+			}
+			else if (c == ' ' && paren_count == 0)
+			{
+				need_parens = true;
+				break;
+			}
+		}
+		assert(paren_count == 0);
+	}
 
 	// If this expression contains any spaces which are not enclosed by parentheses,
 	// we need to enclose it so we can treat the whole string as an expression.
@@ -1924,7 +1965,7 @@ string CompilerGLSL::to_expression(uint32_t id)
 		{
 			auto &dec = meta[var.self].decoration;
 			if (dec.builtin)
-				return builtin_to_glsl(dec.builtin_type);
+				return builtin_to_glsl(dec.builtin_type, var.storage);
 			else
 				return to_name(id);
 		}
@@ -2099,7 +2140,7 @@ string CompilerGLSL::constant_expression(const SPIRConstant &c)
 			if (subc.specialization && options.vulkan_semantics)
 				res += to_name(elem);
 			else
-				res += constant_expression(get<SPIRConstant>(elem));
+				res += constant_expression(subc);
 
 			if (&elem != &c.subconstants.back())
 				res += ", ";
@@ -2973,6 +3014,21 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 {
 	string fname;
 
+	// textureLod on sampler2DArrayShadow and samplerCubeShadow does not exist in GLSL for some reason.
+	// To emulate this, we will have to use textureGrad with a constant gradient of 0.
+	// The workaround will assert that the LOD is in fact constant 0, or we cannot emit correct code.
+	// This happens for HLSL SampleCmpLevelZero on Texture2DArray and TextureCube.
+	bool workaround_lod_array_shadow_as_grad = false;
+	if (((imgtype.image.arrayed && imgtype.image.dim == Dim2D) || imgtype.image.dim == DimCube) &&
+	    imgtype.image.depth && lod)
+	{
+		auto *constant_lod = maybe_get<SPIRConstant>(lod);
+		if (!constant_lod || constant_lod->scalar_f32() != 0.0f)
+			SPIRV_CROSS_THROW(
+			    "textureLod on sampler2DArrayShadow is not constant 0.0. This cannot be expressed in GLSL.");
+		workaround_lod_array_shadow_as_grad = true;
+	}
+
 	if (is_fetch)
 		fname += "texelFetch";
 	else
@@ -2985,9 +3041,9 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 			fname += "Offsets";
 		if (is_proj)
 			fname += "Proj";
-		if (has_grad)
+		if (has_grad || workaround_lod_array_shadow_as_grad)
 			fname += "Grad";
-		if (!!lod)
+		if (!!lod && !workaround_lod_array_shadow_as_grad)
 			fname += "Lod";
 	}
 
@@ -2998,7 +3054,7 @@ string CompilerGLSL::to_function_name(uint32_t, const SPIRType &imgtype, bool is
 }
 
 // Returns the function args for a texture sampling function for the specified image and sampling characteristics.
-string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool, bool, uint32_t coord,
+string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, bool, bool, bool is_proj, uint32_t coord,
                                       uint32_t coord_components, uint32_t dref, uint32_t grad_x, uint32_t grad_y,
                                       uint32_t lod, uint32_t coffset, uint32_t offset, uint32_t bias, uint32_t comp,
                                       uint32_t sample, bool *p_forward)
@@ -3030,7 +3086,13 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool
 	// Only enclose the UV expression if needed.
 	auto coord_expr = (*swizzle_expr == '\0') ? to_expression(coord) : (to_enclosed_expression(coord) + swizzle_expr);
 
-	// TODO: implement rest ... A bit intensive.
+	// textureLod on sampler2DArrayShadow and samplerCubeShadow does not exist in GLSL for some reason.
+	// To emulate this, we will have to use textureGrad with a constant gradient of 0.
+	// The workaround will assert that the LOD is in fact constant 0, or we cannot emit correct code.
+	// This happens for HLSL SampleCmpLevelZero on Texture2DArray and TextureCube.
+	bool workaround_lod_array_shadow_as_grad =
+	    ((imgtype.image.arrayed && imgtype.image.dim == Dim2D) || imgtype.image.dim == DimCube) &&
+	    imgtype.image.depth && lod;
 
 	if (dref)
 	{
@@ -3043,6 +3105,35 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool
 			farg_str += to_expression(coord);
 			farg_str += ", ";
 			farg_str += to_expression(dref);
+		}
+		else if (is_proj)
+		{
+			// Have to reshuffle so we get vec4(coord, dref, proj), special case.
+			// Other shading languages splits up the arguments for coord and compare value like SPIR-V.
+			// The coordinate type for textureProj shadow is always vec4 even for sampler1DShadow.
+			farg_str += ", vec4(";
+
+			if (imgtype.image.dim == Dim1D)
+			{
+				// Could reuse coord_expr, but we will mess up the temporary usage checking.
+				farg_str += to_enclosed_expression(coord) + ".x";
+				farg_str += ", ";
+				farg_str += "0.0, ";
+				farg_str += to_expression(dref);
+				farg_str += ", ";
+				farg_str += to_enclosed_expression(coord) + ".y)";
+			}
+			else if (imgtype.image.dim == Dim2D)
+			{
+				// Could reuse coord_expr, but we will mess up the temporary usage checking.
+				farg_str += to_enclosed_expression(coord) + (swizz_func ? ".xy()" : ".xy");
+				farg_str += ", ";
+				farg_str += to_expression(dref);
+				farg_str += ", ";
+				farg_str += to_enclosed_expression(coord) + ".z)";
+			}
+			else
+				SPIRV_CROSS_THROW("Invalid type for textureProj with shadow.");
 		}
 		else
 		{
@@ -3076,11 +3167,23 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &, bool, bool
 
 	if (lod)
 	{
-		if (check_explicit_lod_allowed(lod))
+		if (workaround_lod_array_shadow_as_grad)
 		{
-			forward = forward && should_forward(lod);
-			farg_str += ", ";
-			farg_str += to_expression(lod);
+			// Implement textureGrad() instead. LOD == 0.0 is implemented as gradient of 0.0.
+			// Implementing this as plain texture() is not safe on some implementations.
+			if (imgtype.image.dim == Dim2D)
+				farg_str += ", vec2(0.0), vec2(0.0)";
+			else if (imgtype.image.dim == DimCube)
+				farg_str += ", vec3(0.0), vec3(0.0)";
+		}
+		else
+		{
+			if (check_explicit_lod_allowed(lod))
+			{
+				forward = forward && should_forward(lod);
+				farg_str += ", ";
+				farg_str += to_expression(lod);
+			}
 		}
 	}
 
@@ -3422,7 +3525,7 @@ string CompilerGLSL::bitcast_glsl(const SPIRType &result_type, uint32_t argument
 		return join(op, "(", to_expression(argument), ")");
 }
 
-string CompilerGLSL::builtin_to_glsl(BuiltIn builtin)
+string CompilerGLSL::builtin_to_glsl(BuiltIn builtin, StorageClass storage)
 {
 	switch (builtin)
 	{
@@ -3486,6 +3589,32 @@ string CompilerGLSL::builtin_to_glsl(BuiltIn builtin)
 		return "gl_GlobalInvocationID";
 	case BuiltInLocalInvocationIndex:
 		return "gl_LocalInvocationIndex";
+
+	case BuiltInSampleId:
+		if (options.es && options.version < 320)
+			require_extension("GL_OES_sample_variables");
+		if (!options.es && options.version < 400)
+			SPIRV_CROSS_THROW("gl_SampleID not supported before GLSL 400.");
+		return "gl_SampleID";
+
+	case BuiltInSampleMask:
+		if (options.es && options.version < 320)
+			require_extension("GL_OES_sample_variables");
+		if (!options.es && options.version < 400)
+			SPIRV_CROSS_THROW("gl_SampleMask/gl_SampleMaskIn not supported before GLSL 400.");
+
+		if (storage == StorageClassInput)
+			return "gl_SampleMaskIn";
+		else
+			return "gl_SampleMask";
+
+	case BuiltInSamplePosition:
+		if (options.es && options.version < 320)
+			require_extension("GL_OES_sample_variables");
+		if (!options.es && options.version < 400)
+			SPIRV_CROSS_THROW("gl_SamplePosition not supported before GLSL 400.");
+		return "gl_SamplePosition";
+
 	default:
 		return join("gl_BuiltIn_", convert_to_string(builtin));
 	}
@@ -3603,10 +3732,10 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				if (access_chain_is_arrayed)
 				{
 					expr += ".";
-					expr += builtin_to_glsl(builtin);
+					expr += builtin_to_glsl(builtin, type->storage);
 				}
 				else
-					expr = builtin_to_glsl(builtin);
+					expr = builtin_to_glsl(builtin, type->storage);
 			}
 			else
 			{
@@ -4472,18 +4601,13 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			auto lhs = to_expression(ops[0]);
 			auto rhs = to_expression(ops[1]);
 
-			// It is possible with OpLoad/OpCompositeInsert/OpStore that we get <expr> = <same-expr>.
-			// For this case, we don't need to invalidate anything and emit any opcode.
-			if (lhs != rhs)
-			{
-				// Tries to optimize assignments like "<lhs> = <lhs> op expr".
-				// While this is purely cosmetic, this is important for legacy ESSL where loop
-				// variable increments must be in either i++ or i += const-expr.
-				// Without this, we end up with i = i + 1, which is correct GLSL, but not correct GLES 2.0.
-				if (!optimize_read_modify_write(lhs, rhs))
-					statement(lhs, " = ", rhs, ";");
-				register_write(ops[0]);
-			}
+			// Tries to optimize assignments like "<lhs> = <lhs> op expr".
+			// While this is purely cosmetic, this is important for legacy ESSL where loop
+			// variable increments must be in either i++ or i += const-expr.
+			// Without this, we end up with i = i + 1, which is correct GLSL, but not correct GLES 2.0.
+			if (!optimize_read_modify_write(lhs, rhs))
+				statement(lhs, " = ", rhs, ";");
+			register_write(ops[0]);
 		}
 		break;
 	}
@@ -4727,26 +4851,12 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 
 		flush_variable_declaration(composite);
 
-		auto *expr = maybe_get<SPIRExpression>(id);
-		if ((expr && expr->used_while_invalidated) || !should_forward(composite))
-		{
-			// Make a copy, then use access chain to store the variable.
-			statement(declare_temporary(result_type, id), to_expression(composite), ";");
-			set<SPIRExpression>(id, to_name(id), result_type, true);
-			auto chain = access_chain_internal(id, elems, length, true);
-			statement(chain, " = ", to_expression(obj), ";");
-		}
-		else
-		{
-			auto chain = access_chain_internal(composite, elems, length, true);
-			statement(chain, " = ", to_expression(obj), ";");
-			set<SPIRExpression>(id, to_expression(composite), result_type, true);
+		// Make a copy, then use access chain to store the variable.
+		statement(declare_temporary(result_type, id), to_expression(composite), ";");
+		set<SPIRExpression>(id, to_name(id), result_type, true);
+		auto chain = access_chain_internal(id, elems, length, true);
+		statement(chain, " = ", to_expression(obj), ";");
 
-			register_write(composite);
-			register_read(id, composite, true);
-			// Invalidate the old expression we inserted into.
-			invalid_expressions.insert(composite);
-		}
 		break;
 	}
 
@@ -5792,7 +5902,7 @@ string CompilerGLSL::to_member_name(const SPIRType &type, uint32_t index)
 	if (index < memb.size() && !memb[index].alias.empty())
 		return memb[index].alias;
 	else
-		return join("_", index);
+		return join("_m", index);
 }
 
 void CompilerGLSL::add_member_name(SPIRType &type, uint32_t index)
