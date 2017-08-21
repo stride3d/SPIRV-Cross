@@ -340,7 +340,7 @@ string CompilerGLSL::compile()
 
 std::string CompilerGLSL::get_partial_source()
 {
-	return buffer->str();
+	return buffer ? buffer->str() : "No compiled source available yet.";
 }
 
 void CompilerGLSL::emit_header()
@@ -1979,6 +1979,10 @@ string CompilerGLSL::to_expression(uint32_t id)
 		// expression ala sampler2D(texture, sampler).
 		SPIRV_CROSS_THROW("Combined image samplers have no default expression representation.");
 
+	case TypeAccessChain:
+		// We cannot express this type. They only have meaning in other OpAccessChains, OpStore or OpLoad.
+		SPIRV_CROSS_THROW("Access chains have no default expression representation.");
+
 	default:
 		return to_name(id);
 	}
@@ -3615,6 +3619,18 @@ string CompilerGLSL::builtin_to_glsl(BuiltIn builtin, StorageClass storage)
 			SPIRV_CROSS_THROW("gl_SamplePosition not supported before GLSL 400.");
 		return "gl_SamplePosition";
 
+	case BuiltInViewIndex:
+		if (options.vulkan_semantics)
+		{
+			require_extension("GL_EXT_multiview");
+			return "gl_ViewIndex";
+		}
+		else
+		{
+			require_extension("GL_OVR_multiview2");
+			return "gl_ViewID_OVR";
+		}
+
 	default:
 		return join("gl_BuiltIn_", convert_to_string(builtin));
 	}
@@ -3644,9 +3660,11 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 	if (!chain_only)
 		expr = to_enclosed_expression(base);
 
-	const auto *type = &expression_type(base);
+	uint32_t type_id = expression_type_id(base);
+	const auto *type = &get<SPIRType>(type_id);
 
-	// Start traversing type hierarchy at the proper non-pointer types.
+	// Start traversing type hierarchy at the proper non-pointer types,
+	// but keep type_id referencing the original pointer for use below.
 	while (type->pointer)
 	{
 		assert(type->parent_type);
@@ -3709,7 +3727,8 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 			if (!pending_array_enclose)
 				expr += "]";
 
-			type = &get<SPIRType>(type->parent_type);
+			type_id = type->parent_type;
+			type = &get<SPIRType>(type_id);
 
 			access_chain_is_arrayed = true;
 		}
@@ -3740,7 +3759,7 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 			else
 			{
 				// If the member has a qualified name, use it as the entire chain
-				string qual_mbr_name = get_member_qualified_name(type->self, index);
+				string qual_mbr_name = get_member_qualified_name(type_id, index);
 				if (!qual_mbr_name.empty())
 					expr = qual_mbr_name;
 				else
@@ -3775,7 +3794,8 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				expr += to_expression(index);
 			expr += "]";
 
-			type = &get<SPIRType>(type->parent_type);
+			type_id = type->parent_type;
+			type = &get<SPIRType>(type_id);
 		}
 		// Vector -> Scalar
 		else if (type->vecsize > 1)
@@ -3798,7 +3818,8 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				expr += "]";
 			}
 
-			type = &get<SPIRType>(type->parent_type);
+			type_id = type->parent_type;
+			type = &get<SPIRType>(type_id);
 		}
 		else
 			SPIRV_CROSS_THROW("Cannot subdivide a scalar value!");
@@ -3828,7 +3849,7 @@ string CompilerGLSL::access_chain(uint32_t base, const uint32_t *indices, uint32
 	{
 		uint32_t matrix_stride;
 		bool need_transpose;
-		flattened_access_chain_offset(base, indices, count, 0, &need_transpose, &matrix_stride);
+		flattened_access_chain_offset(expression_type(base), indices, count, 0, 16, &need_transpose, &matrix_stride);
 
 		if (out_need_transpose)
 			*out_need_transpose = target_type.columns > 1 && need_transpose;
@@ -3980,7 +4001,7 @@ std::string CompilerGLSL::flattened_access_chain_vector(uint32_t base, const uin
                                                         const SPIRType &target_type, uint32_t offset,
                                                         uint32_t matrix_stride, bool need_transpose)
 {
-	auto result = flattened_access_chain_offset(base, indices, count, offset);
+	auto result = flattened_access_chain_offset(expression_type(base), indices, count, offset, 16);
 
 	auto buffer_name = to_name(expression_type(base).self);
 
@@ -4039,12 +4060,13 @@ std::string CompilerGLSL::flattened_access_chain_vector(uint32_t base, const uin
 	}
 }
 
-std::pair<std::string, uint32_t> CompilerGLSL::flattened_access_chain_offset(uint32_t base, const uint32_t *indices,
+std::pair<std::string, uint32_t> CompilerGLSL::flattened_access_chain_offset(const SPIRType &basetype, const uint32_t *indices,
                                                                              uint32_t count, uint32_t offset,
+                                                                             uint32_t word_stride,
                                                                              bool *need_transpose,
                                                                              uint32_t *out_matrix_stride)
 {
-	const auto *type = &expression_type(base);
+	const auto *type = &basetype;
 
 	// Start traversing type hierarchy at the proper non-pointer types.
 	while (type->pointer)
@@ -4087,8 +4109,6 @@ std::pair<std::string, uint32_t> CompilerGLSL::flattened_access_chain_offset(uin
 			else
 			{
 				// Dynamic array access.
-				// FIXME: This will need to change if we support other flattening types than 32-bit.
-				const uint32_t word_stride = 16;
 				if (array_stride % word_stride)
 				{
 					SPIRV_CROSS_THROW(
@@ -4097,7 +4117,7 @@ std::pair<std::string, uint32_t> CompilerGLSL::flattened_access_chain_offset(uin
 					    "This cannot be flattened. Try using std140 layout instead.");
 				}
 
-				expr += to_expression(index);
+				expr += to_enclosed_expression(index);
 				expr += " * ";
 				expr += convert_to_string(array_stride / word_stride);
 				expr += " + ";
@@ -6693,10 +6713,16 @@ void CompilerGLSL::emit_function(SPIRFunction &func, uint64_t return_flags)
 void CompilerGLSL::emit_fixup()
 {
 	auto &execution = get_entry_point();
-	if (execution.model == ExecutionModelVertex && options.vertex.fixup_clipspace)
+	if (execution.model == ExecutionModelVertex)
 	{
-		const char *suffix = backend.float_literal_suffix ? "f" : "";
-		statement("gl_Position.z = 2.0", suffix, " * gl_Position.z - gl_Position.w;");
+		if (options.vertex.fixup_clipspace)
+		{
+			const char *suffix = backend.float_literal_suffix ? "f" : "";
+			statement("gl_Position.z = 2.0", suffix, " * gl_Position.z - gl_Position.w;");
+		}
+
+		if (options.vertex.flip_vert_y)
+			statement("gl_Position.y = -gl_Position.y;");
 	}
 }
 

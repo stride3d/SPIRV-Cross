@@ -249,6 +249,10 @@ SPIRVariable *Compiler::maybe_get_backing_variable(uint32_t chain)
 		auto *cexpr = maybe_get<SPIRExpression>(chain);
 		if (cexpr)
 			var = maybe_get<SPIRVariable>(cexpr->loaded_from);
+
+		auto *access_chain = maybe_get<SPIRAccessChain>(chain);
+		if (access_chain)
+			var = maybe_get<SPIRVariable>(access_chain->loaded_from);
 	}
 
 	return var;
@@ -283,6 +287,10 @@ void Compiler::register_write(uint32_t chain)
 		auto *expr = maybe_get<SPIRExpression>(chain);
 		if (expr && expr->loaded_from)
 			var = maybe_get<SPIRVariable>(expr->loaded_from);
+
+		auto *access_chain = maybe_get<SPIRAccessChain>(chain);
+		if (access_chain && access_chain->loaded_from)
+			var = maybe_get<SPIRVariable>(access_chain->loaded_from);
 	}
 
 	if (var)
@@ -337,31 +345,39 @@ void Compiler::flush_all_active_variables()
 	flush_all_aliased_variables();
 }
 
-const SPIRType &Compiler::expression_type(uint32_t id) const
+uint32_t Compiler::expression_type_id(uint32_t id) const
 {
 	switch (ids[id].get_type())
 	{
 	case TypeVariable:
-		return get<SPIRType>(get<SPIRVariable>(id).basetype);
+		return get<SPIRVariable>(id).basetype;
 
 	case TypeExpression:
-		return get<SPIRType>(get<SPIRExpression>(id).expression_type);
+		return get<SPIRExpression>(id).expression_type;
 
 	case TypeConstant:
-		return get<SPIRType>(get<SPIRConstant>(id).constant_type);
+		return get<SPIRConstant>(id).constant_type;
 
 	case TypeConstantOp:
-		return get<SPIRType>(get<SPIRConstantOp>(id).basetype);
+		return get<SPIRConstantOp>(id).basetype;
 
 	case TypeUndef:
-		return get<SPIRType>(get<SPIRUndef>(id).basetype);
+		return get<SPIRUndef>(id).basetype;
 
 	case TypeCombinedImageSampler:
-		return get<SPIRType>(get<SPIRCombinedImageSampler>(id).combined_type);
+		return get<SPIRCombinedImageSampler>(id).combined_type;
+
+	case TypeAccessChain:
+		return get<SPIRAccessChain>(id).basetype;
 
 	default:
 		SPIRV_CROSS_THROW("Cannot resolve expression type.");
 	}
+}
+
+const SPIRType &Compiler::expression_type(uint32_t id) const
+{
+	return get<SPIRType>(expression_type_id(id));
 }
 
 bool Compiler::expression_is_lvalue(uint32_t id) const
@@ -389,6 +405,8 @@ bool Compiler::is_immutable(uint32_t id) const
 		bool pointer_to_const = var.storage == StorageClassUniformConstant;
 		return pointer_to_const || var.phi_variable || !expression_is_lvalue(id);
 	}
+	else if (ids[id].get_type() == TypeAccessChain)
+		return get<SPIRAccessChain>(id).immutable;
 	else if (ids[id].get_type() == TypeExpression)
 		return get<SPIRExpression>(id).immutable;
 	else if (ids[id].get_type() == TypeConstant || ids[id].get_type() == TypeConstantOp ||
@@ -473,6 +491,11 @@ bool Compiler::is_vector(const SPIRType &type) const
 bool Compiler::is_matrix(const SPIRType &type) const
 {
 	return type.vecsize > 1 && type.columns > 1;
+}
+
+bool Compiler::is_array(const SPIRType &type) const
+{
+	return !type.array.empty();
 }
 
 ShaderResources Compiler::get_shader_resources() const
@@ -932,36 +955,21 @@ const std::string &Compiler::get_member_name(uint32_t id, uint32_t index) const
 	return m.members[index].alias;
 }
 
-void Compiler::set_member_qualified_name(uint32_t id, uint32_t index, const std::string &name)
+void Compiler::set_member_qualified_name(uint32_t type_id, uint32_t index, const std::string &name)
 {
-	// Tunnel through pointers to get to the base type
-	auto *p_type = &get<SPIRType>(id);
-	while (p_type->pointer)
-		p_type = &get<SPIRType>(p_type->parent_type);
-
-	uint32_t type_id = p_type->self;
-
 	meta.at(type_id).members.resize(max(meta[type_id].members.size(), size_t(index) + 1));
 	meta.at(type_id).members[index].qualified_alias = name;
 }
 
-const std::string &Compiler::get_member_qualified_name(uint32_t id, uint32_t index) const
+const std::string &Compiler::get_member_qualified_name(uint32_t type_id, uint32_t index) const
 {
-	// Tunnel through pointers to get to the base type
-	auto *p_type = &get<SPIRType>(id);
-	while (p_type->pointer)
-		p_type = &get<SPIRType>(p_type->parent_type);
-
-	uint32_t type_id = p_type->self;
+	const static string empty;
 
 	auto &m = meta.at(type_id);
-	if (index >= m.members.size())
-	{
-		static string empty;
+	if (index < m.members.size())
+		return m.members[index].qualified_alias;
+	else
 		return empty;
-	}
-
-	return m.members[index].qualified_alias;
 }
 
 uint32_t Compiler::get_member_decoration(uint32_t id, uint32_t index, Decoration decoration) const
@@ -1255,12 +1263,17 @@ void Compiler::parse(const Instruction &instruction)
 		uint32_t cap = ops[0];
 		if (cap == CapabilityKernel)
 			SPIRV_CROSS_THROW("Kernel capability not supported.");
+
+		declared_capabilities.push_back(static_cast<Capability>(ops[0]));
 		break;
 	}
 
 	case OpExtension:
-		// Ignore extensions
+	{
+		auto ext = extract_string(spirv, instruction.offset);
+		declared_extensions.push_back(move(ext));
 		break;
+	}
 
 	case OpExtInstImport:
 	{
@@ -3038,8 +3051,14 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 			const auto test_phi = [this, &block](uint32_t to) {
 				auto &next = compiler.get<SPIRBlock>(to);
 				for (auto &phi : next.phi_variables)
+				{
 					if (phi.parent == block.self)
+					{
 						accessed_variables_to_block[phi.function_variable].insert(block.self);
+						// Phi variables are also accessed in our target branch block.
+						accessed_variables_to_block[phi.function_variable].insert(next.self);
+					}
+				}
 			};
 
 			switch (block.terminator)
@@ -3433,6 +3452,9 @@ bool Compiler::ActiveBuiltinHandler::handle(spv::Op opcode, const uint32_t *args
 		if (!var)
 			break;
 
+		// Required if we access chain into builtins like gl_GlobalInvocationID.
+		add_if_builtin(args[2]);
+
 		auto *type = &compiler.get<SPIRType>(var->basetype);
 
 		// Start traversing type hierarchy at the proper non-pointer types.
@@ -3629,22 +3651,32 @@ void Compiler::make_constant_null(uint32_t id, uint32_t type)
 		vector<uint32_t> elements(constant_type.array.back());
 		for (uint32_t i = 0; i < constant_type.array.back(); i++)
 			elements[i] = parent_id;
-		set<SPIRConstant>(id, type, elements.data(), elements.size());
+		set<SPIRConstant>(id, type, elements.data(), uint32_t(elements.size()));
 	}
 	else if (!constant_type.member_types.empty())
 	{
-		uint32_t member_ids = increase_bound_by((uint32_t)(constant_type.member_types.size()));
+		uint32_t member_ids = increase_bound_by(uint32_t(constant_type.member_types.size()));
 		vector<uint32_t> elements(constant_type.member_types.size());
 		for (uint32_t i = 0; i < constant_type.member_types.size(); i++)
 		{
 			make_constant_null(member_ids + i, constant_type.member_types[i]);
 			elements[i] = member_ids + i;
 		}
-		set<SPIRConstant>(id, type, elements.data(), elements.size());
+		set<SPIRConstant>(id, type, elements.data(), uint32_t(elements.size()));
 	}
 	else
 	{
 		auto &constant = set<SPIRConstant>(id, type);
 		constant.make_null(constant_type);
 	}
+}
+
+const std::vector<spv::Capability> &Compiler::get_declared_capabilities() const
+{
+	return declared_capabilities;
+}
+
+const std::vector<std::string> &Compiler::get_declared_extensions() const
+{
+	return declared_extensions;
 }
