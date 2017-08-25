@@ -1361,6 +1361,7 @@ void Compiler::parse(const Instruction &instruction)
         break;
     }
 
+    case OpSamplerStateDef:
     case OpResourceGroupName:
     case OpLinkName:
     {
