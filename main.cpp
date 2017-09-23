@@ -37,12 +37,12 @@ using namespace spirv_cross;
 using namespace std;
 
 #ifdef SPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS
-#define THROW(x)                   \
-	do                             \
-	{                              \
-		fprintf(stderr, "%s.", x); \
-		exit(1);                   \
-	} while (0)
+static inline void THROW(const char *str)
+{
+	fprintf(stderr, "SPIRV-Cross will abort: %s\n", str);
+	fflush(stderr);
+	abort();
+}
 #else
 #define THROW(x) throw runtime_error(x)
 #endif
@@ -472,6 +472,7 @@ struct CLIArguments
 	bool hlsl_compat = false;
 	bool vulkan_semantics = false;
 	bool flatten_multidimensional_arrays = false;
+	bool use_420pack_extension = true;
 	bool remove_unused = false;
 	bool cfg_analysis = true;
 };
@@ -487,7 +488,7 @@ static void print_help()
 	                "[--separate-shader-objects]"
 	                "[--pls-in format input-name] [--pls-out format output-name] [--remap source_name target_name "
 	                "components] [--extension ext] [--entry name] [--remove-unused-variables] "
-	                "[--flatten-multidimensional-arrays] "
+	                "[--flatten-multidimensional-arrays] [--no-420pack-extension] "
 	                "[--remap-variable-type <variable_name> <new_variable_type>] "
 	                "[--rename-interface-variable <in|out> <location> <new_variable_name>] "
 	                "\n");
@@ -593,8 +594,7 @@ void rename_interface_variable(Compiler &compiler, const vector<Resource> &resou
 	}
 }
 
-//int main(int argc, char *argv[])
-int main_original(int argc, char *argv[])
+static int main_inner(int argc, char *argv[])
 {
 	CLIArguments args;
 	CLICallbacks cbs;
@@ -631,6 +631,7 @@ int main_original(int argc, char *argv[])
 	cbs.add("--hlsl-enable-compat", [&args](CLIParser &) { args.hlsl_compat = true; });
 	cbs.add("--vulkan-semantics", [&args](CLIParser &) { args.vulkan_semantics = true; });
 	cbs.add("--flatten-multidimensional-arrays", [&args](CLIParser &) { args.flatten_multidimensional_arrays = true; });
+	cbs.add("--no-420pack-extension", [&args](CLIParser &) { args.use_420pack_extension = false; });
 	cbs.add("--extension", [&args](CLIParser &parser) { args.extensions.push_back(parser.next_string()); });
 	cbs.add("--entry", [&args](CLIParser &parser) { args.entry = parser.next_string(); });
 	cbs.add("--separate-shader-objects", [&args](CLIParser &) { args.sso = true; });
@@ -752,6 +753,7 @@ int main_original(int argc, char *argv[])
 	opts.force_temporary = args.force_temporary;
 	opts.separate_shader_objects = args.sso;
 	opts.flatten_multidimensional_arrays = args.flatten_multidimensional_arrays;
+	opts.enable_420pack_extension = args.use_420pack_extension;
 	opts.vulkan_semantics = args.vulkan_semantics;
 	opts.vertex.fixup_clipspace = args.fixup;
 	opts.vertex.flip_vert_y = args.yflip;
@@ -858,7 +860,26 @@ int main_original(int argc, char *argv[])
 	else
 		printf("%s", glsl.c_str());
 
-    return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
+}
+
+//int main(int argc, char *argv[])
+int main_original(int argc, char *argv[])
+{
+#ifdef SPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS
+	return main_inner(argc, argv);
+#else
+	// Make sure we catch the exception or it just disappears into the aether on Windows.
+	try
+	{
+		return main_inner(argc, argv);
+	}
+	catch (const std::exception &e)
+	{
+		fprintf(stderr, "SPIRV-Cross threw an exception: %s\n", e.what());
+		return EXIT_FAILURE;
+	}
+#endif
 }
 
 bool parseArgs(int argc, char *argv[], CLIArguments& args)
@@ -887,15 +908,20 @@ bool parseArgs(int argc, char *argv[], CLIArguments& args)
     cbs.add("--force-temporary", [&args](CLIParser &) { args.force_temporary = true; });
     cbs.add("--flatten-ubo", [&args](CLIParser &) { args.flatten_ubo = true; });
     cbs.add("--fixup-clipspace", [&args](CLIParser &) { args.fixup = true; });
+    cbs.add("--flip-vert-y", [&args](CLIParser &) { args.yflip = true; });
     cbs.add("--iterations", [&args](CLIParser &parser) { args.iterations = parser.next_uint(); });
     cbs.add("--cpp", [&args](CLIParser &) { args.cpp = true; });
     cbs.add("--cpp-interface-name", [&args](CLIParser &parser) { args.cpp_interface_name = parser.next_string(); });
     cbs.add("--metal", [&args](CLIParser &) { args.msl = true; }); // Legacy compatibility
     cbs.add("--msl", [&args](CLIParser &) { args.msl = true; });
     cbs.add("--hlsl", [&args](CLIParser &) { args.hlsl = true; });
+    cbs.add("--hlsl-enable-compat", [&args](CLIParser &) { args.hlsl_compat = true; });
     cbs.add("--vulkan-semantics", [&args](CLIParser &) { args.vulkan_semantics = true; });
+    cbs.add("--flatten-multidimensional-arrays", [&args](CLIParser &) { args.flatten_multidimensional_arrays = true; });
+    cbs.add("--no-420pack-extension", [&args](CLIParser &) { args.use_420pack_extension = false; });
     cbs.add("--extension", [&args](CLIParser &parser) { args.extensions.push_back(parser.next_string()); });
     cbs.add("--entry", [&args](CLIParser &parser) { args.entry = parser.next_string(); });
+    cbs.add("--separate-shader-objects", [&args](CLIParser &) { args.sso = true; });
     cbs.add("--remap", [&args](CLIParser &parser) {
         string src = parser.next_string();
         string dst = parser.next_string();
@@ -907,6 +933,19 @@ bool parseArgs(int argc, char *argv[], CLIArguments& args)
         string var_name = parser.next_string();
         string new_type = parser.next_string();
         args.variable_type_remaps.push_back({ move(var_name), move(new_type) });
+    });
+
+    cbs.add("--rename-interface-variable", [&args](CLIParser &parser) {
+        StorageClass cls = StorageClassMax;
+        string clsStr = parser.next_string();
+        if (clsStr == "in")
+            cls = StorageClassInput;
+        else if (clsStr == "out")
+            cls = StorageClassOutput;
+
+        uint32_t loc = parser.next_uint();
+        string var_name = parser.next_string();
+        args.interface_variable_renames.push_back({ cls, loc, move(var_name) });
     });
 
     cbs.add("--pls-in", [&args](CLIParser &parser) {
