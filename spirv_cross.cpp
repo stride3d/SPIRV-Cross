@@ -1363,6 +1363,7 @@ void Compiler::parse(const Instruction &instruction)
 
     case OpSamplerStateDef:
     case OpResourceGroupName:
+    case OpLogicalGroupName:
     case OpLinkName:
     {
         break;

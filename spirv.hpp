@@ -945,8 +945,9 @@ enum Op {
     OpLinkName = 5602,                       //Used when user specified a linkName (KeyName) attribute for a variable
     OpMemberLogicalGroup = 5603,             //Used when we have a member with a logical group
     OpResourceGroupName = 5604,              //Used when a resource has a resourceGroupName
-    OpSemanticName = 5614,                   //Record the semantic name of a type, as declared by the user
-    OpSamplerStateDef = 5618,                //Defines a type samplerState
+    OpLogicalGroupName = 5605,               //Used when a resource has a logicalGroupName
+    OpSemanticName = 5615,                   //Record the semantic name of a type, as declared by the user
+    OpSamplerStateDef = 5619,                //Defines a type samplerState
     //================================================================================================
     
     OpMax = 0x7fffffff,
