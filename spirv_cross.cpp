@@ -679,7 +679,8 @@ ShaderResources Compiler::get_shader_resources(const unordered_set<uint32_t> *ac
 		if (var.storage == StorageClassInput && interface_variable_exists_in_entry_point(var.self))
 		{
 			if (meta[type.self].decoration.decoration_flags & (1ull << DecorationBlock))
-				res.stage_inputs.push_back({ var.self, var.basetype, type.self, meta[type.self].decoration.alias });
+				res.stage_inputs.push_back(
+				    { var.self, var.basetype, type.self, get_remapped_declared_block_name(var.self) });
 			else
 				res.stage_inputs.push_back({ var.self, var.basetype, type.self, meta[var.self].decoration.alias });
 		}
@@ -692,7 +693,8 @@ ShaderResources Compiler::get_shader_resources(const unordered_set<uint32_t> *ac
 		else if (var.storage == StorageClassOutput && interface_variable_exists_in_entry_point(var.self))
 		{
 			if (meta[type.self].decoration.decoration_flags & (1ull << DecorationBlock))
-				res.stage_outputs.push_back({ var.self, var.basetype, type.self, meta[type.self].decoration.alias });
+				res.stage_outputs.push_back(
+				    { var.self, var.basetype, type.self, get_remapped_declared_block_name(var.self) });
 			else
 				res.stage_outputs.push_back({ var.self, var.basetype, type.self, meta[var.self].decoration.alias });
 		}
@@ -700,24 +702,21 @@ ShaderResources Compiler::get_shader_resources(const unordered_set<uint32_t> *ac
 		else if (type.storage == StorageClassUniform &&
 		         (meta[type.self].decoration.decoration_flags & (1ull << DecorationBlock)))
 		{
-			auto &block_name = meta[type.self].decoration.alias;
-			res.uniform_buffers.push_back({ var.self, var.basetype, type.self,
-			                                block_name.empty() ? get_block_fallback_name(var.self) : block_name });
+			res.uniform_buffers.push_back(
+			    { var.self, var.basetype, type.self, get_remapped_declared_block_name(var.self) });
 		}
 		// Old way to declare SSBOs.
 		else if (type.storage == StorageClassUniform &&
 		         (meta[type.self].decoration.decoration_flags & (1ull << DecorationBufferBlock)))
 		{
-			auto &block_name = meta[type.self].decoration.alias;
-			res.storage_buffers.push_back({ var.self, var.basetype, type.self,
-			                                block_name.empty() ? get_block_fallback_name(var.self) : block_name });
+			res.storage_buffers.push_back(
+			    { var.self, var.basetype, type.self, get_remapped_declared_block_name(var.self) });
 		}
 		// Modern way to declare SSBOs.
 		else if (type.storage == StorageClassStorageBuffer)
 		{
-			auto &block_name = meta[type.self].decoration.alias;
-			res.storage_buffers.push_back({ var.self, var.basetype, type.self,
-			                                block_name.empty() ? get_block_fallback_name(var.self) : block_name });
+			res.storage_buffers.push_back(
+			    { var.self, var.basetype, type.self, get_remapped_declared_block_name(var.self) });
 		}
 		// Push constant blocks
 		else if (type.storage == StorageClassPushConstant)
@@ -1196,7 +1195,10 @@ const std::string Compiler::get_fallback_name(uint32_t id) const
 const std::string Compiler::get_block_fallback_name(uint32_t id) const
 {
 	auto &var = get<SPIRVariable>(id);
-	return join("_", get<SPIRType>(var.basetype).self, "_", id);
+	if (get_name(id).empty())
+		return join("_", get<SPIRType>(var.basetype).self, "_", id);
+	else
+		return get_name(id);
 }
 
 uint64_t Compiler::get_decoration_mask(uint32_t id) const
@@ -1738,6 +1740,14 @@ void Compiler::parse(const Instruction &instruction)
 
 		auto &var = set<SPIRVariable>(id, type, storage, initializer);
 
+		// hlsl based shaders don't have those decorations. force them and then reset when reading/writing images
+		auto &ttype = get<SPIRType>(type);
+		if (ttype.basetype == SPIRType::BaseType::Image)
+		{
+			set_decoration(id, DecorationNonWritable);
+			set_decoration(id, DecorationNonReadable);
+		}
+
 		if (variable_storage_is_aliased(var))
 			aliased_variables.push_back(var.self);
 
@@ -2007,6 +2017,8 @@ void Compiler::parse(const Instruction &instruction)
 
 		loop_blocks.insert(current_block->self);
 		loop_merge_targets.insert(current_block->merge_block);
+
+		continue_block_to_loop_header[current_block->continue_block] = current_block->self;
 
 		// Don't add loop headers to continue blocks,
 		// which would make it impossible branch into the loop header since
@@ -3246,6 +3258,10 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 				auto *var = compiler.maybe_get<SPIRVariable>(ptr);
 				if (var && var->storage == StorageClassFunction)
 					accessed_variables_to_block[var->self].insert(current_block->self);
+
+				for (uint32_t i = 3; i < length; i++)
+					if (id_is_phi_variable(args[i]))
+						accessed_variables_to_block[args[i]].insert(current_block->self);
 				break;
 			}
 
@@ -3384,16 +3400,27 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 		{
 			// If we're accessing a variable inside a continue block, this variable might be a loop variable.
 			// We can only use loop variables with scalars, as we cannot track static expressions for vectors.
-			if (this->is_continue(block) && type.vecsize == 1 && type.columns == 1)
+			if (this->is_continue(block))
 			{
-				// The variable is used in multiple continue blocks, this is not a loop
-				// candidate, signal that by setting block to -1u.
-				auto &potential = potential_loop_variables[var.first];
+				// Potentially awkward case to check for.
+				// We might have a variable inside a loop, which is touched by the continue block,
+				// but is not actually a loop variable.
+				// The continue block is dominated by the inner part of the loop, which does not make sense in high-level
+				// language output because it will be declared before the body,
+				// so we will have to lift the dominator up to the relevant loop header instead.
+				builder.add_block(continue_block_to_loop_header[block]);
 
-				if (potential == 0)
-					potential = block;
-				else
-					potential = ~(0u);
+				if (type.vecsize == 1 && type.columns == 1)
+				{
+					// The variable is used in multiple continue blocks, this is not a loop
+					// candidate, signal that by setting block to -1u.
+					auto &potential = potential_loop_variables[var.first];
+
+					if (potential == 0)
+						potential = block;
+					else
+						potential = ~(0u);
+				}
 			}
 			builder.add_block(block);
 		}
@@ -3402,6 +3429,7 @@ void Compiler::analyze_variable_scope(SPIRFunction &entry)
 
 		// Add it to a per-block list of variables.
 		uint32_t dominating_block = builder.get_dominator();
+
 		// If all blocks here are dead code, this will be 0, so the variable in question
 		// will be completely eliminated.
 		if (dominating_block)
@@ -3835,4 +3863,18 @@ const std::vector<spv::Capability> &Compiler::get_declared_capabilities() const
 const std::vector<std::string> &Compiler::get_declared_extensions() const
 {
 	return declared_extensions;
+}
+
+std::string Compiler::get_remapped_declared_block_name(uint32_t id) const
+{
+	auto itr = declared_block_names.find(id);
+	if (itr != end(declared_block_names))
+		return itr->second;
+	else
+	{
+		auto &var = get<SPIRVariable>(id);
+		auto &type = get<SPIRType>(var.basetype);
+		auto &block_name = meta[type.self].decoration.alias;
+		return block_name.empty() ? get_block_fallback_name(id) : block_name;
+	}
 }

@@ -92,6 +92,7 @@ private:
 	void emit_legacy_uniform(const SPIRVariable &var);
 	void emit_specialization_constants();
 	void emit_fixup() override;
+	std::string builtin_to_glsl(spv::BuiltIn builtin, spv::StorageClass storage) override;
 	std::string layout_for_member(const SPIRType &type, uint32_t index) override;
 	std::string to_interpolation_qualifiers(uint64_t flags) override;
 	std::string bitcast_glsl_op(const SPIRType &result_type, const SPIRType &argument_type) override;
@@ -116,6 +117,13 @@ private:
 	Options options;
 	bool requires_op_fmod = false;
 	bool requires_textureProj = false;
+	bool requires_fp16_packing = false;
+	bool requires_unorm8_packing = false;
+	bool requires_snorm8_packing = false;
+	bool requires_unorm16_packing = false;
+	bool requires_snorm16_packing = false;
+	bool requires_bitfield_insert = false;
+	bool requires_bitfield_extract = false;
 	uint64_t required_textureSizeVariants = 0;
 	void require_texture_query_variant(const SPIRType &type);
 

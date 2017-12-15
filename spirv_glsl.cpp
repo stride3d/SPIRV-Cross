@@ -368,6 +368,9 @@ string CompilerGLSL::compile()
 	// Force a classic "C" locale, reverts when function returns
 	ClassicLocale classic_locale;
 
+	if (options.vulkan_semantics)
+		backend.allow_precision_qualifiers = true;
+
 	// Scan the SPIR-V to find trivial uses of extensions.
 	find_static_extensions();
 	fixup_image_load_store_access();
@@ -1374,17 +1377,24 @@ void CompilerGLSL::emit_buffer_block_native(const SPIRVariable &var)
 	bool is_readonly = ssbo && (flags & (1ull << DecorationNonWritable)) != 0;
 	bool is_coherent = ssbo && (flags & (1ull << DecorationCoherent)) != 0;
 
-	add_resource_name(var.self);
-
-	// Block names should never alias.
+	// Block names should never alias, but from HLSL input they kind of can because block types are reused for UAVs ...
 	auto buffer_name = to_name(type.self, false);
 
 	// Shaders never use the block by interface name, so we don't
 	// have to track this other than updating name caches.
 	if (meta[type.self].decoration.alias.empty() || resource_names.find(buffer_name) != end(resource_names))
 		buffer_name = get_block_fallback_name(var.self);
-	else
-		resource_names.insert(buffer_name);
+
+	// Make sure we get something unique.
+	add_variable(resource_names, buffer_name);
+
+	// If for some reason buffer_name is an illegal name, make a final fallback to a workaround name.
+	// This cannot conflict with anything else, so we're safe now.
+	if (buffer_name.empty())
+		buffer_name = join("_", get<SPIRType>(var.basetype).self, "_", var.self);
+
+	// Save for post-reflection later.
+	declared_block_names[var.self] = buffer_name;
 
 	statement(layout_for_variable(var), is_coherent ? "coherent " : "", is_restrict ? "restrict " : "",
 	          is_writeonly ? "writeonly " : "", is_readonly ? "readonly " : "", ssbo ? "buffer " : "uniform ",
@@ -1402,6 +1412,7 @@ void CompilerGLSL::emit_buffer_block_native(const SPIRVariable &var)
 		i++;
 	}
 
+	add_resource_name(var.self);
 	end_scope_decl(to_name(var.self) + type_to_array_glsl(type));
 	statement("");
 }
@@ -1521,8 +1532,6 @@ void CompilerGLSL::emit_interface_block(const SPIRVariable &var)
 					require_extension("GL_EXT_shader_io_blocks");
 			}
 
-			add_resource_name(var.self);
-
 			// Block names should never alias.
 			auto block_name = to_name(type.self, false);
 
@@ -1546,6 +1555,7 @@ void CompilerGLSL::emit_interface_block(const SPIRVariable &var)
 				i++;
 			}
 
+			add_resource_name(var.self);
 			end_scope_decl(join(to_name(var.self), type_to_array_glsl(type)));
 			statement("");
 		}
@@ -1712,7 +1722,7 @@ string CompilerGLSL::remap_swizzle(const SPIRType &out_type, uint32_t input_comp
 {
 	if (out_type.vecsize == input_components)
 		return expr;
-	else if (input_components == 1)
+	else if (input_components == 1 && !backend.can_swizzle_scalar)
 		return join(type_to_glsl(out_type), "(", expr, ")");
 	else
 	{
@@ -1722,6 +1732,8 @@ string CompilerGLSL::remap_swizzle(const SPIRType &out_type, uint32_t input_comp
 			e += index_to_swizzle(min(c, input_components - 1));
 		if (backend.swizzle_is_function && out_type.vecsize > 1)
 			e += "()";
+
+		remove_duplicate_swizzle(e);
 		return e;
 	}
 }
@@ -3450,6 +3462,15 @@ string CompilerGLSL::to_function_args(uint32_t img, const SPIRType &imgtype, boo
 	auto swizzle_expr = swizzle(coord_components, expression_type(coord).vecsize);
 	// Only enclose the UV expression if needed.
 	auto coord_expr = (*swizzle_expr == '\0') ? to_expression(coord) : (to_enclosed_expression(coord) + swizzle_expr);
+
+	// texelFetch only takes int, not uint.
+	auto &coord_type = expression_type(coord);
+	if (coord_type.basetype == SPIRType::UInt)
+	{
+		auto expected_type = coord_type;
+		expected_type.basetype = SPIRType::Int;
+		coord_expr = bitcast_expression(expected_type, coord_type.basetype, coord_expr);
+	}
 
 	// textureLod on sampler2DArrayShadow and samplerCubeShadow does not exist in GLSL for some reason.
 	// To emulate this, we will have to use textureGrad with a constant gradient of 0.
@@ -5373,13 +5394,19 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		// Arrays and structs must be initialized properly in full.
 		bool composite = !out_type.array.empty() || out_type.basetype == SPIRType::Struct;
 		bool splat = in_type.vecsize == 1 && in_type.columns == 1 && !composite && backend.use_constructor_splatting;
+		bool swizzle_splat = in_type.vecsize == 1 && in_type.columns == 1 && backend.can_swizzle_scalar;
 
-		if (splat)
+		if (splat || swizzle_splat)
 		{
 			uint32_t input = elems[0];
 			for (uint32_t i = 0; i < length; i++)
+			{
 				if (input != elems[i])
+				{
 					splat = false;
+					swizzle_splat = false;
+				}
+			}
 		}
 
 		string constructor_op;
@@ -5393,6 +5420,10 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			else
 				constructor_op += build_composite_combiner(elems, length);
 			constructor_op += " }";
+		}
+		else if (swizzle_splat && !composite)
+		{
+			constructor_op = remap_swizzle(get<SPIRType>(result_type), 1, to_expression(elems[0]));
 		}
 		else
 		{
@@ -6389,6 +6420,12 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		}
 		else
 		{
+			// imageLoad only accepts int coords, not uint.
+			auto coord_expr = to_expression(ops[3]);
+			auto target_coord_type = expression_type(ops[3]);
+			target_coord_type.basetype = SPIRType::Int;
+			coord_expr = bitcast_expression(target_coord_type, expression_type(ops[3]).basetype, coord_expr);
+
 			// Plain image load/store.
 			if (type.image.ms)
 			{
@@ -6397,11 +6434,11 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 					SPIRV_CROSS_THROW("Multisampled image used in OpImageRead, but unexpected operand mask was used.");
 
 				uint32_t samples = ops[5];
-				imgexpr = join("imageLoad(", to_expression(ops[2]), ", ", to_expression(ops[3]), ", ",
-				               to_expression(samples), ")");
+				imgexpr =
+				    join("imageLoad(", to_expression(ops[2]), ", ", coord_expr, ", ", to_expression(samples), ")");
 			}
 			else
-				imgexpr = join("imageLoad(", to_expression(ops[2]), ", ", to_expression(ops[3]), ")");
+				imgexpr = join("imageLoad(", to_expression(ops[2]), ", ", coord_expr, ")");
 
 			imgexpr = remap_swizzle(get<SPIRType>(result_type), 4, imgexpr);
 			pure = false;
@@ -6458,17 +6495,23 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 		auto store_type = value_type;
 		store_type.vecsize = 4;
 
+		// imageStore only accepts int coords, not uint.
+		auto coord_expr = to_expression(ops[1]);
+		auto target_coord_type = expression_type(ops[1]);
+		target_coord_type.basetype = SPIRType::Int;
+		coord_expr = bitcast_expression(target_coord_type, expression_type(ops[1]).basetype, coord_expr);
+
 		if (type.image.ms)
 		{
 			uint32_t operands = ops[3];
 			if (operands != ImageOperandsSampleMask || length != 5)
 				SPIRV_CROSS_THROW("Multisampled image used in OpImageWrite, but unexpected operand mask was used.");
 			uint32_t samples = ops[4];
-			statement("imageStore(", to_expression(ops[0]), ", ", to_expression(ops[1]), ", ", to_expression(samples),
-			          ", ", remap_swizzle(store_type, value_type.vecsize, to_expression(ops[2])), ");");
+			statement("imageStore(", to_expression(ops[0]), ", ", coord_expr, ", ", to_expression(samples), ", ",
+			          remap_swizzle(store_type, value_type.vecsize, to_expression(ops[2])), ");");
 		}
 		else
-			statement("imageStore(", to_expression(ops[0]), ", ", to_expression(ops[1]), ", ",
+			statement("imageStore(", to_expression(ops[0]), ", ", coord_expr, ", ",
 			          remap_swizzle(store_type, value_type.vecsize, to_expression(ops[2])), ");");
 
 		if (var && variable_storage_is_aliased(*var))
@@ -6855,15 +6898,15 @@ void CompilerGLSL::emit_struct_member(const SPIRType &type, uint32_t member_type
 
 const char *CompilerGLSL::flags_to_precision_qualifiers_glsl(const SPIRType &type, uint64_t flags)
 {
+	// Structs do not have precision qualifiers, neither do doubles (desktop only anyways, so no mediump/highp).
+	if (type.basetype != SPIRType::Float && type.basetype != SPIRType::Int && type.basetype != SPIRType::UInt &&
+	    type.basetype != SPIRType::Image && type.basetype != SPIRType::SampledImage &&
+	    type.basetype != SPIRType::Sampler)
+		return "";
+
 	if (options.es)
 	{
 		auto &execution = get_entry_point();
-
-		// Structs do not have precision qualifiers, neither do doubles (desktop only anyways, so no mediump/highp).
-		if (type.basetype != SPIRType::Float && type.basetype != SPIRType::Int && type.basetype != SPIRType::UInt &&
-		    type.basetype != SPIRType::Image && type.basetype != SPIRType::SampledImage &&
-		    type.basetype != SPIRType::Sampler)
-			return "";
 
 		if (flags & (1ull << DecorationRelaxedPrecision))
 		{
@@ -6891,6 +6934,19 @@ const char *CompilerGLSL::flags_to_precision_qualifiers_glsl(const SPIRType &typ
 
 			return implied_fhighp || implied_ihighp ? "" : "highp ";
 		}
+	}
+	else if (backend.allow_precision_qualifiers)
+	{
+		// Vulkan GLSL supports precision qualifiers, even in desktop profiles, which is convenient.
+		// The default is highp however, so only emit mediump in the rare case that a shader has these.
+		if (flags & (1ull << DecorationRelaxedPrecision))
+		{
+			bool can_use_mediump =
+			    type.basetype == SPIRType::Float || type.basetype == SPIRType::Int || type.basetype == SPIRType::UInt;
+			return can_use_mediump ? "mediump " : "";
+		}
+		else
+			return "";
 	}
 	else
 		return "";
@@ -7272,9 +7328,8 @@ string CompilerGLSL::type_to_glsl(const SPIRType &type, uint32_t id)
 	}
 }
 
-void CompilerGLSL::add_variable(unordered_set<string> &variables, uint32_t id)
+void CompilerGLSL::add_variable(unordered_set<string> &variables, string &name)
 {
-	auto &name = meta[id].decoration.alias;
 	if (name.empty())
 		return;
 
@@ -7286,6 +7341,12 @@ void CompilerGLSL::add_variable(unordered_set<string> &variables, uint32_t id)
 	}
 
 	update_name_cache(variables, name);
+}
+
+void CompilerGLSL::add_variable(unordered_set<string> &variables, uint32_t id)
+{
+	auto &name = meta[id].decoration.alias;
+	add_variable(variables, name);
 }
 
 void CompilerGLSL::add_local_variable_name(uint32_t id)
@@ -7836,6 +7897,9 @@ bool CompilerGLSL::attempt_emit_loop_header(SPIRBlock &block, SPIRBlock::Method 
 			{
 			case SPIRBlock::ForLoop:
 			{
+				// This block may be a dominating block, so make sure we flush undeclared variables before building the for loop header.
+				flush_undeclared_variables(block);
+
 				// Important that we do this in this order because
 				// emitting the continue block can invalidate the condition expression.
 				auto initializer = emit_for_loop_initializers(block);
@@ -7846,6 +7910,8 @@ bool CompilerGLSL::attempt_emit_loop_header(SPIRBlock &block, SPIRBlock::Method 
 			}
 
 			case SPIRBlock::WhileLoop:
+				// This block may be a dominating block, so make sure we flush undeclared variables before building the while loop header.
+				flush_undeclared_variables(block);
 				statement("while (", to_expression(block.condition), ")");
 				break;
 
