@@ -944,7 +944,6 @@ bool parseArgs(int argc, char *argv[], CLIArguments& args)
         args.version = parser.next_uint();
         args.set_version = true;
     });
-    cbs.add("--no-cfg-analysis", [&args](CLIParser &) { args.cfg_analysis = false; });
     cbs.add("--dump-resources", [&args](CLIParser &) { args.dump_resources = true; });
     cbs.add("--force-temporary", [&args](CLIParser &) { args.force_temporary = true; });
     cbs.add("--flatten-ubo", [&args](CLIParser &) { args.flatten_ubo = true; });
@@ -1129,7 +1128,6 @@ int SPIRV_CROSS::convertSpvBytecodeToShader(const vector<uint32_t>& bytecode, st
     opts.force_temporary = args.force_temporary;
     opts.vulkan_semantics = args.vulkan_semantics;
     opts.vertex.fixup_clipspace = args.fixup;
-    opts.cfg_analysis = args.cfg_analysis;
     compiler->set_options(opts);
 
     // Set HLSL specific options.
