@@ -5071,12 +5071,16 @@ bool CompilerGLSL::remove_unity_swizzle(uint32_t base, string &op)
 	return true;
 }
 
-string CompilerGLSL::build_composite_combiner(const uint32_t *elems, uint32_t length)
+string CompilerGLSL::build_composite_combiner(uint32_t return_type, const uint32_t *elems, uint32_t length)
 {
 	uint32_t base = 0;
-	bool swizzle_optimization = false;
 	string op;
 	string subop;
+
+	// Can only merge swizzles for vectors.
+	auto &type = get<SPIRType>(return_type);
+	bool can_apply_swizzle_opt = type.basetype != SPIRType::Struct && type.array.empty() && type.columns == 1;
+	bool swizzle_optimization = false;
 
 	for (uint32_t i = 0; i < length; i++)
 	{
@@ -5084,7 +5088,7 @@ string CompilerGLSL::build_composite_combiner(const uint32_t *elems, uint32_t le
 
 		// If we're merging another scalar which belongs to the same base
 		// object, just merge the swizzles to avoid triggering more than 1 expression read as much as possible!
-		if (e && e->base_expression && e->base_expression == base)
+		if (can_apply_swizzle_opt && e && e->base_expression && e->base_expression == base)
 		{
 			// Only supposed to be used for vector swizzle -> scalar.
 			assert(!e->expression.empty() && e->expression.front() == '.');
@@ -5504,17 +5508,21 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			}
 		}
 
+		if (out_type.basetype == SPIRType::Struct && !backend.can_declare_struct_inline)
+			forward = false;
+
 		string constructor_op;
 		if (backend.use_initializer_list && composite)
 		{
 			// Only use this path if we are building composites.
 			// This path cannot be used for arithmetic.
-			constructor_op += type_to_glsl_constructor(get<SPIRType>(result_type));
+			if (backend.use_typed_initializer_list)
+				constructor_op += type_to_glsl_constructor(get<SPIRType>(result_type));
 			constructor_op += "{ ";
 			if (splat)
 				constructor_op += to_expression(elems[0]);
 			else
-				constructor_op += build_composite_combiner(elems, length);
+				constructor_op += build_composite_combiner(result_type, elems, length);
 			constructor_op += " }";
 		}
 		else if (swizzle_splat && !composite)
@@ -5527,7 +5535,7 @@ void CompilerGLSL::emit_instruction(const Instruction &instruction)
 			if (splat)
 				constructor_op += to_expression(elems[0]);
 			else
-				constructor_op += build_composite_combiner(elems, length);
+				constructor_op += build_composite_combiner(result_type, elems, length);
 			constructor_op += ")";
 		}
 
