@@ -32,7 +32,7 @@ class SPIRV_CROSS
 public:
     static int executeCmd(int argc, char *argv[]);
 
-    static int convertSpvBytecodeToGlsl(const std::vector<uint32_t>& bytecode, std::string& glsl);
+    static int convertSpvBytecodeToGlsl(const std::vector<uint32_t>& bytecode, bool es, int version, std::string& glsl);
     static int convertSpvBytecodeToHlsl(const std::vector<uint32_t>& bytecode, int shaderModel, std::string& hlsl);
 
 private:
