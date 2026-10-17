@@ -1924,8 +1924,10 @@ void CompilerHLSL::emit_resources()
 	const bool is_tesc = execution.model == ExecutionModelTessellationControl;
 	const bool is_tese = execution.model == ExecutionModelTessellationEvaluation;
 	const bool is_mesh_shader = execution.model == ExecutionModelMeshEXT;
+	// A geometry shader's signature always takes the input array, even when the shader reads no input.
+	const bool is_geometry = execution.model == ExecutionModelGeometry;
 
-	if (!input_variables.empty() || !input_builtins.empty() || is_tesc || is_tese)
+	if (!input_variables.empty() || !input_builtins.empty() || is_tesc || is_tese || is_geometry)
 	{
 		require_input = true;
 		statement("struct SPIRV_Cross_Input");
